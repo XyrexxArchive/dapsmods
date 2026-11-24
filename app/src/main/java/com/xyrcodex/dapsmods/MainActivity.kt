@@ -41,7 +41,7 @@ class MainActivity : ComponentActivity() {
     private var player:ExoPlayer?=null
     override fun onCreate(savedInstanceState:Bundle?) {
         super.onCreate(savedInstanceState)
-        StreamResolver.initialize(this)
+        MusicEngine.initialize(this)
         player=ExoPlayer.Builder(this).build()
         setContent { DapsModsApp(player) }
     }
@@ -95,7 +95,7 @@ data class ThemeColors(val bg:Color,val card:Color,val text:Color,val muted:Colo
             Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.LibraryMusic,null,tint=c.muted,modifier=Modifier.size(46.dp));Spacer(Modifier.height(10.dp));Text("Cari musik favoritmu",color=c.text,fontWeight=FontWeight.SemiBold);Text("Hasil pencarian dari YouTube Music",color=c.muted,fontSize=12.sp)}
         } else LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(bottom=16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
             items(songs,key={it.id}){song->Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.card).clickable{
-                playing=song;scope.launch{try{val url=withContext(Dispatchers.IO){StreamResolver.resolve(song)};player?.setMediaItem(MediaItem.fromUri(url));player?.prepare();player?.play()}catch(e:Exception){Toast.makeText(context,e.message?: "Gagal memutar",Toast.LENGTH_LONG).show()}}
+                playing=song;scope.launch{try{val url=MusicEngine.resolve(song);player?.setMediaItem(MediaItem.fromUri(url));player?.prepare();player?.play()}catch(e:Exception){Toast.makeText(context,e.message?: "Gagal memutar",Toast.LENGTH_LONG).show()}}
             }.padding(10.dp),verticalAlignment=Alignment.CenterVertically){
                 AsyncImage(song.thumbnail,null,Modifier.size(54.dp).clip(RoundedCornerShape(10.dp)))
                 Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(song.title,color=c.text,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis);Text(song.artist+" • "+song.duration,color=c.muted,fontSize=12.sp,maxLines=1)}
