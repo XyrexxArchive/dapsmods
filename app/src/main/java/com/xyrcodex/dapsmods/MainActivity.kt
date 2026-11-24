@@ -23,6 +23,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -30,7 +33,8 @@ import coil.compose.AsyncImage
 import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.MediaItem
 import com.xyrcodex.dapsmods.data.*
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -81,18 +85,53 @@ data class ThemeColors(val bg:Color,val card:Color,val text:Color,val muted:Colo
     var loading by remember{mutableStateOf(false)}; var error by remember{mutableStateOf("")}
     var playing by remember{mutableStateOf<Song?>(null)}; var lyrics by remember{mutableStateOf<Lyrics?>(null)}
     var showLyrics by remember{mutableStateOf(false)}; val scope=rememberCoroutineScope()
+    var searchJob by remember{mutableStateOf<Job?>(null)}
+    var searchToken by remember{mutableStateOf(0)}
+    val performSearch:()->Unit = {
+        val term=query.trim()
+        if(term.isNotEmpty()) {
+            searchJob?.cancel()
+            val token=searchToken+1
+            searchToken=token
+            loading=true
+            error=""
+            searchJob=scope.launch {
+                try {
+                    val result=MusicEngine.search(term)
+                    if(searchToken==token) {
+                        songs=result
+                        if(result.isEmpty()) error="Musik tidak ditemukan. Coba kata kunci lain."
+                    }
+                } catch(e:CancellationException) {
+                    throw e
+                } catch(e:Exception) {
+                    if(searchToken==token) error=e.message?: "Pencarian gagal"
+                } finally {
+                    if(searchToken==token) loading=false
+                }
+            }
+        }
+    }
     Column(Modifier.fillMaxSize().padding(horizontal=20.dp)) {
         Spacer(Modifier.height(24.dp)); Text("DapsMods",fontSize=27.sp,fontWeight=FontWeight.Bold,color=c.text)
         Text("Temukan musik yang kamu suka",fontSize=13.sp,color=c.muted); Spacer(Modifier.height(20.dp))
         Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.card).padding(horizontal=14.dp,vertical=4.dp),verticalAlignment=Alignment.CenterVertically) {
             Icon(Icons.Rounded.Search,null,tint=c.muted)
-            TextField(query,{query=it},Modifier.weight(1f),placeholder={Text("Cari judul atau artis",color=c.muted)},singleLine=true,colors=TextFieldDefaults.colors(focusedContainerColor=Color.Transparent,unfocusedContainerColor=Color.Transparent,focusedIndicatorColor=Color.Transparent,unfocusedIndicatorColor=Color.Transparent,cursorColor=c.accent))
-            IconButton(onClick={if(query.isNotBlank()){loading=true;error="";scope.launch{try{songs=MusicEngine.search(query)}catch(e:Exception){error=e.message?: "Pencarian gagal"};loading=false}}}){Icon(Icons.Rounded.ArrowForward,null,tint=c.accent)}
+            TextField(query,{query=it},Modifier.weight(1f),placeholder={Text("Cari judul atau artis",color=c.muted)},singleLine=true,keyboardOptions=KeyboardOptions(imeAction=ImeAction.Search),keyboardActions=KeyboardActions(onSearch={performSearch()}),colors=TextFieldDefaults.colors(focusedContainerColor=Color.Transparent,unfocusedContainerColor=Color.Transparent,focusedIndicatorColor=Color.Transparent,unfocusedIndicatorColor=Color.Transparent,cursorColor=c.accent))
+            IconButton(onClick=performSearch){Icon(Icons.Rounded.ArrowForward,null,tint=c.accent)}
         }
-        Spacer(Modifier.height(16.dp)); if(loading)LinearProgressIndicator(Modifier.fillMaxWidth(),color=c.accent)
-        if(error.isNotBlank())Text(error,color=MaterialTheme.colorScheme.error,fontSize=13.sp)
-        if(songs.isEmpty()&&!loading) Box(Modifier.fillMaxWidth().weight(1f),contentAlignment=Alignment.Center) {
-            Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.LibraryMusic,null,tint=c.muted,modifier=Modifier.size(46.dp));Spacer(Modifier.height(10.dp));Text("Cari musik favoritmu",color=c.text,fontWeight=FontWeight.SemiBold);Text("Hasil pencarian dari YouTube Music",color=c.muted,fontSize=12.sp)}
+        Spacer(Modifier.height(16.dp))
+        if(loading) LinearProgressIndicator(Modifier.fillMaxWidth(),color=c.accent)
+        if(error.isNotBlank()) Text(error,color=MaterialTheme.colorScheme.error,fontSize=13.sp,modifier=Modifier.padding(top=8.dp))
+        if(loading) Box(Modifier.fillMaxWidth().weight(1f),contentAlignment=Alignment.Center) {
+            Column(horizontalAlignment=Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color=c.accent,strokeWidth=3.dp)
+                Spacer(Modifier.height(12.dp))
+                Text("Sedang mencari musik...",color=c.text,fontWeight=FontWeight.SemiBold)
+                Text("Menghubungkan ke YouTube Music",color=c.muted,fontSize=12.sp)
+            }
+        } else if(songs.isEmpty()) Box(Modifier.fillMaxWidth().weight(1f),contentAlignment=Alignment.Center) {
+            Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.LibraryMusic,null,tint=c.muted,modifier=Modifier.size(46.dp));Spacer(Modifier.height(10.dp));Text(if(error.isNotBlank()) "Belum ada hasil" else "Cari musik favoritmu",color=c.text,fontWeight=FontWeight.SemiBold);Text(if(error.isNotBlank()) "Periksa kata kunci lalu coba lagi" else "Hasil pencarian dari YouTube Music",color=c.muted,fontSize=12.sp)}
         } else LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(bottom=16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
             items(songs,key={it.id}){song->Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.card).clickable{
                 playing=song;scope.launch{try{val url=MusicEngine.resolve(song);player?.setMediaItem(MediaItem.fromUri(url));player?.prepare();player?.play()}catch(e:Exception){Toast.makeText(context,e.message?: "Gagal memutar",Toast.LENGTH_LONG).show()}}
