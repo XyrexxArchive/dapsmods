@@ -35,7 +35,7 @@ object MusicEngine {
         PlaylistManager.getInstance(app)
         OfflineMusicManager.getInstance(app)
     }
-    private fun Track.toSong() = Song(id,title,artist,highResThumbnailUrl,formattedDuration,url,durationSeconds)
+    fun Track.toSong() = Song(id,title,artist,highResThumbnailUrl,formattedDuration,url,durationSeconds)
     fun Song.toTrack() = Track(id=id,url=url,title=title,artist=artist,thumbnailUrl=thumbnail,durationSeconds=durationSeconds)
     suspend fun search(query:String):List<Song> = withContext(Dispatchers.IO) {
         if(query.isBlank()) return@withContext emptyList()
