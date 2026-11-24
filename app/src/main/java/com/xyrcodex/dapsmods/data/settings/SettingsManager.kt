@@ -328,16 +328,20 @@ class SettingsManager private constructor(private val context: Context) {
     }
 
     fun getLocalizedString(resId: Int, vararg formatArgs: Any): String {
-        val localizedCtx = createLocalizedContext(context)
-        return try {
-            if (formatArgs.isEmpty()) {
-                localizedCtx.getString(resId)
-            } else {
-                localizedCtx.getString(resId, *formatArgs)
-            }
-        } catch (_: Throwable) {
-            context.getString(resId)
+        val value = when (resId) {
+            1001 -> "High Quality"
+            1002 -> "Best audio fidelity"
+            1003 -> "Normal Quality"
+            1004 -> "Balanced speed and data usage"
+            1005 -> "Data Saver"
+            1006 -> "Minimal data usage"
+            2001 -> "Quick Picks"
+            2002 -> "Listen to your favorite music"
+            2003 -> "Trending Songs"
+            2004 -> "Most played right now"
+            else -> ""
         }
+        return if (formatArgs.isEmpty()) value else runCatching { String.format(value, *formatArgs) }.getOrDefault(value)
     }
 
     fun getEffectiveHlAndGl(): Pair<String, String> {
