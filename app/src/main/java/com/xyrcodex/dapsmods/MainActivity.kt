@@ -42,6 +42,7 @@ import com.xyrcodex.dapsmods.data.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 enum class AppTab { MUSIC, TOOLS, SETTINGS }
@@ -108,7 +109,35 @@ data class ThemeColors(val bg:Color,val card:Color,val text:Color,val muted:Colo
     var query by remember{mutableStateOf("")}; var songs by remember{mutableStateOf(emptyList<Song>())}
     var loading by remember{mutableStateOf(false)}; var error by remember{mutableStateOf("")}
     var playing by remember{mutableStateOf<Song?>(null)}; var lyrics by remember{mutableStateOf<Lyrics?>(null)}
-    var showLyrics by remember{mutableStateOf(false)}; val scope=rememberCoroutineScope()
+    var showLyrics by remember{mutableStateOf(false)}; var showQueue by remember{mutableStateOf(false)}
+    var positionMs by remember{mutableStateOf(0L)}; var durationMs by remember{mutableStateOf(0L)}
+    val scope=rememberCoroutineScope()
+    LaunchedEffect(player) {
+        while (true) {
+            positionMs = player?.currentPosition?.coerceAtLeast(0L) ?: 0L
+            durationMs = player?.duration?.takeIf { it > 0L } ?: 0L
+            delay(500)
+        }
+    }
+    suspend fun playQueuedTrack(track: com.xyrcodex.dapsmods.data.model.Track?) {
+        if (track == null) return
+        val song = MusicEngine.run { track.toSong() }
+        playing = song
+        try {
+            val streamUrl = MusicEngine.resolve(song)
+            val metadata = MediaMetadata.Builder().setTitle(song.title).setArtist(song.artist)
+                .setArtworkUri(Uri.parse(song.thumbnail)).build()
+            player?.setMediaItem(MediaItem.Builder().setMediaId(song.id).setUri(streamUrl).setMediaMetadata(metadata).build())
+            player?.prepare()
+            player?.play()
+            MusicEngine.history(context).recordTrackPlayed(track)
+            MusicEngine.reportPlayback(song.id)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Throwable) {
+            Toast.makeText(context,e.message ?: "Gagal memutar lagu",Toast.LENGTH_LONG).show()
+        }
+    }
     var searchJob by remember{mutableStateOf<Job?>(null)}
     var searchToken by remember{mutableStateOf(0)}
     val performSearch:()->Unit = {
@@ -186,12 +215,51 @@ data class ThemeColors(val bg:Color,val card:Color,val text:Color,val muted:Colo
                 Icon(Icons.Rounded.PlayCircleFilled,null,tint=c.accent,modifier=Modifier.size(28.dp))
             }}
         }
-        playing?.let{song->Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.soft).padding(12.dp),verticalAlignment=Alignment.CenterVertically){
-            Column(Modifier.weight(1f)){Text(song.title,color=c.text,fontWeight=FontWeight.SemiBold,maxLines=1);Text(song.artist,color=c.muted,fontSize=12.sp)}
-            IconButton(onClick={if(player?.isPlaying==true)player.pause() else player?.play()}){Icon(if(player?.isPlaying==true)Icons.Rounded.Pause else Icons.Rounded.PlayArrow,null,tint=c.accent)}
-            IconButton(onClick={showLyrics=true;scope.launch{lyrics=try{MusicEngine.lyrics(song)}catch(_:Exception){null}}}){Icon(Icons.Rounded.Lyrics,null,tint=c.accent)}
-        }}
+        playing?.let{song->
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.soft).padding(horizontal=12.dp,vertical=8.dp)) {
+                Row(verticalAlignment=Alignment.CenterVertically) {
+                    AsyncImage(song.thumbnail,null,Modifier.size(42.dp).clip(RoundedCornerShape(8.dp)))
+                    Column(Modifier.weight(1f).padding(horizontal=10.dp)) {
+                        Text(song.title,color=c.text,fontWeight=FontWeight.SemiBold,maxLines=1)
+                        Text(song.artist,color=c.muted,fontSize=12.sp,maxLines=1)
+                    }
+                    IconButton(onClick={scope.launch{playQueuedTrack(MusicEngine.queue().getPreviousTrack())}}) { Icon(Icons.Rounded.SkipPrevious,null,tint=c.text) }
+                    IconButton(onClick={if(player?.isPlaying==true)player.pause() else player?.play()}) { Icon(if(player?.isPlaying==true)Icons.Rounded.Pause else Icons.Rounded.PlayArrow,null,tint=c.accent) }
+                    IconButton(onClick={scope.launch{playQueuedTrack(MusicEngine.queue().getNextTrack(true))}}) { Icon(Icons.Rounded.SkipNext,null,tint=c.text) }
+                    IconButton(onClick={showQueue=true}) { Icon(Icons.Rounded.QueueMusic,null,tint=c.text) }
+                }
+                Slider(value=if(durationMs>0) positionMs.toFloat().coerceIn(0f,durationMs.toFloat()) else 0f,onValueChange={player?.seekTo(it.toLong())},valueRange=0f..durationMs.coerceAtLeast(1L).toFloat(),modifier=Modifier.fillMaxWidth().height(22.dp))
+                Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
+                    Text(formatPlaybackTime(positionMs),color=c.muted,fontSize=10.sp)
+                    Text(formatPlaybackTime(durationMs),color=c.muted,fontSize=10.sp)
+                }
+            }
+        }
     }
+    if(showQueue) AlertDialog(
+        onDismissRequest={showQueue=false},
+        containerColor=c.card,
+        title={Text("Queue",color=c.text)},
+        text={
+            LazyColumn(Modifier.heightIn(max=420.dp)) {
+                items(MusicEngine.queue().queueState.value, key={it.id}) { track ->
+                    Row(Modifier.fillMaxWidth().clickable {
+                        MusicEngine.queue().playTrack(track)
+                        showQueue=false
+                        scope.launch { playQueuedTrack(track) }
+                    }.padding(vertical=10.dp),verticalAlignment=Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(track.title,color=c.text,maxLines=1)
+                            Text(track.artist,color=c.muted,fontSize=12.sp,maxLines=1)
+                        }
+                        if(MusicEngine.queue().currentTrack.value?.id==track.id) Icon(Icons.Rounded.GraphicEq,null,tint=c.accent)
+                    }
+                }
+            }
+        },
+        confirmButton={TextButton(onClick={showQueue=false}){Text("Tutup")}}
+    )
+
     if(showLyrics)AlertDialog(onDismissRequest={showLyrics=false},containerColor=c.card,title={Text("Lyrics",color=c.text)},text={Column(Modifier.heightIn(max=420.dp)){
         Text(playing?.title.orEmpty(),color=c.text,fontWeight=FontWeight.Bold);Spacer(Modifier.height(8.dp))
         if(lyrics==null)Text("Lirik belum tersedia atau sedang dimuat.",color=c.muted) else LazyColumn{items(lyrics!!.lines){line->Text(line.second,color=c.text,modifier=Modifier.padding(vertical=5.dp))}}
@@ -246,4 +314,9 @@ fun download(context:Context,url:String,name:String) {
         }
         Text("Dibuat ringan dengan Kotlin dan Jetpack Compose.",color=c.muted,fontSize=12.sp,modifier=Modifier.padding(top=14.dp))
     }
+}
+
+private fun formatPlaybackTime(ms: Long): String {
+    val total = ms.coerceAtLeast(0L) / 1000L
+    return String.format(java.util.Locale.US, "%d:%02d", total / 60L, total % 60L)
 }
