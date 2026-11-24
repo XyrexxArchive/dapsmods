@@ -2,7 +2,7 @@ package com.xyrcodex.dapsmods.data
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.FormBody
+import okhttp3.MediaType.Companion.toMediaType\nimport okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
@@ -19,7 +19,7 @@ object MusicEngine {
     suspend fun search(query:String):List<Song> = withContext(Dispatchers.IO) {
         if(query.isBlank()) return@withContext emptyList()
         val body=JSONObject().put("context",JSONObject().put("client",JSONObject().put("clientName","WEB_REMIX").put("clientVersion","1.20260401.01.00").put("hl","en").put("gl","ID"))).put("query",query).put("params","Eg-KAQwIARAAGAAgACgAMABqChAEEAMQCRAFEAo=").toString()
-        val req=Request.Builder().url(YTM).headers(okhttp3.Headers.headersOf(*headers.flatMap{listOf(it.key,it.value)}.toTypedArray())).post(okhttp3.RequestBody.create("application/json".toMediaTypeOrNull(),body)).build()
+        val req=Request.Builder().url(YTM).headers(okhttp3.Headers.headersOf(*headers.flatMap{listOf(it.key,it.value)}.toTypedArray())).post(body.toRequestBody("application/json; charset=utf-8".toMediaType())).build()
         client.newCall(req).execute().use { res ->
             if(!res.isSuccessful) error("Music search HTTP ${res.code}")
             val root=JSONObject(res.body?.string().orEmpty())
