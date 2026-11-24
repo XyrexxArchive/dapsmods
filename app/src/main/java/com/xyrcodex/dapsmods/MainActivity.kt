@@ -49,7 +49,7 @@ enum class AppTab { MUSIC, LIBRARY, TOOLS, SETTINGS }
 enum class AppTheme { LIGHT, DARK, GLASS, BRUTAL }
 
 class MainActivity : ComponentActivity() {
-    private var controller: MediaController? = null
+    private var controller by mutableStateOf<MediaController?>(null)
     private var controllerFuture: com.google.common.util.concurrent.ListenableFuture<MediaController>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -61,7 +61,6 @@ class MainActivity : ComponentActivity() {
             future.addListener({
                 runCatching { future.get() }.onSuccess { connected ->
                     controller = connected
-                    setContent { DapsModsApp(controller) }
                 }.onFailure {
                     Toast.makeText(this, it.message ?: "Player service gagal dimulai", Toast.LENGTH_LONG).show()
                 }
