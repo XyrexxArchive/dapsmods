@@ -261,6 +261,8 @@ data class ThemeColors(val bg:Color,val card:Color,val text:Color,val muted:Colo
                 AsyncImage(song.thumbnail,null,Modifier.size(54.dp).clip(RoundedCornerShape(10.dp)))
                 Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(song.title,color=c.text,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis);Text(song.artist+" • "+song.duration,color=c.muted,fontSize=12.sp,maxLines=1)}
                 IconButton(onClick={playing=song;showLyrics=true;scope.launch{lyrics=try{MusicEngine.lyrics(song)}catch(_:Exception){null}}}){Icon(Icons.Rounded.Lyrics,null,tint=c.accent)}
+                IconButton(onClick={MusicEngine.offline(context).downloadTrack(MusicEngine.run { song.toTrack() });Toast.makeText(context,"Download offline dimulai",Toast.LENGTH_SHORT).show()}){Icon(Icons.Rounded.Download,null,tint=c.accent)}
+                IconButton(onClick={MusicEngine.playlists(context).toggleWatchLater(MusicEngine.run { song.toTrack() });Toast.makeText(context,"Ditambahkan ke Putar Nanti",Toast.LENGTH_SHORT).show()}){Icon(Icons.Rounded.BookmarkAdd,null,tint=c.accent)}
                 Icon(Icons.Rounded.PlayCircleFilled,null,tint=c.accent,modifier=Modifier.size(28.dp))
             }}
         }
