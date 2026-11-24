@@ -30,8 +30,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import com.google.android.exoplayer2.ExoPlayer
-import com.google.android.exoplayer2.MediaItem
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
+import androidx.media3.common.Player
+import androidx.media3.session.MediaController
+import androidx.media3.session.SessionToken
+import androidx.core.content.ContextCompat
+import com.google.common.util.concurrent.MoreExecutors
+import com.xyrcodex.dapsmods.service.PlaybackService
 import com.xyrcodex.dapsmods.data.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -42,17 +48,35 @@ enum class AppTab { MUSIC, TOOLS, SETTINGS }
 enum class AppTheme { LIGHT, DARK, GLASS, BRUTAL }
 
 class MainActivity : ComponentActivity() {
-    private var player:ExoPlayer?=null
-    override fun onCreate(savedInstanceState:Bundle?) {
+    private var controller: MediaController? = null
+    private var controllerFuture: com.google.common.util.concurrent.ListenableFuture<MediaController>? = null
+
+    override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         MusicEngine.initialize(this)
-        player=ExoPlayer.Builder(this).build()
-        setContent { DapsModsApp(player) }
+        setContent { DapsModsApp(controller) }
+        val token = SessionToken(this, android.content.ComponentName(this, PlaybackService::class.java))
+        controllerFuture = MediaController.Builder(this, token).buildAsync().also { future ->
+            future.addListener({
+                runCatching { future.get() }.onSuccess { connected ->
+                    controller = connected
+                    setContent { DapsModsApp(controller) }
+                }.onFailure {
+                    Toast.makeText(this, it.message ?: "Player service gagal dimulai", Toast.LENGTH_LONG).show()
+                }
+            }, ContextCompat.getMainExecutor(this))
+        }
     }
-    override fun onDestroy(){player?.release();player=null;super.onDestroy()}
+
+    override fun onDestroy() {
+        controller = null
+        controllerFuture?.let { MediaController.releaseFuture(it) }
+        controllerFuture = null
+        super.onDestroy()
+    }
 }
 
-@Composable fun DapsModsApp(player:ExoPlayer?) {
+@Composable fun DapsModsApp(player: Player?) {
     var tab by remember { mutableStateOf(AppTab.MUSIC) }
     var theme by remember { mutableStateOf(AppTheme.DARK) }
     val c=when(theme){
@@ -79,7 +103,7 @@ class MainActivity : ComponentActivity() {
 data class ThemeColors(val bg:Color,val card:Color,val text:Color,val muted:Color,val accent:Color,val soft:Color)
 @Composable fun navColors(c:ThemeColors)=NavigationBarItemDefaults.colors(selectedIconColor=c.accent,selectedTextColor=c.accent,indicatorColor=c.soft,unselectedIconColor=c.muted,unselectedTextColor=c.muted)
 
-@Composable fun MusicScreen(c:ThemeColors,player:ExoPlayer?) {
+@Composable fun MusicScreen(c:ThemeColors,player:Player?) {
     val context=LocalContext.current
     var query by remember{mutableStateOf("")}; var songs by remember{mutableStateOf(emptyList<Song>())}
     var loading by remember{mutableStateOf(false)}; var error by remember{mutableStateOf("")}
@@ -134,7 +158,27 @@ data class ThemeColors(val bg:Color,val card:Color,val text:Color,val muted:Colo
             Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.LibraryMusic,null,tint=c.muted,modifier=Modifier.size(46.dp));Spacer(Modifier.height(10.dp));Text(if(error.isNotBlank()) "Belum ada hasil" else "Cari musik favoritmu",color=c.text,fontWeight=FontWeight.SemiBold);Text(if(error.isNotBlank()) "Periksa kata kunci lalu coba lagi" else "Hasil pencarian dari YouTube Music",color=c.muted,fontSize=12.sp)}
         } else LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(bottom=16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
             items(songs,key={it.id}){song->Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.card).clickable{
-                playing=song;scope.launch{try{val url=MusicEngine.resolve(song);player?.setMediaItem(MediaItem.fromUri(url));player?.prepare();player?.play()}catch(e:Exception){Toast.makeText(context,e.message?: "Gagal memutar",Toast.LENGTH_LONG).show()}}
+                playing=song
+                scope.launch {
+                    try {
+                        val url = MusicEngine.resolve(song)
+                        MusicEngine.setQueue(songs, songs.indexOf(song).coerceAtLeast(0))
+                        val metadata = MediaMetadata.Builder()
+                            .setTitle(song.title)
+                            .setArtist(song.artist)
+                            .setArtworkUri(Uri.parse(song.thumbnail))
+                            .build()
+                        player?.setMediaItem(MediaItem.Builder().setMediaId(song.id).setUri(url).setMediaMetadata(metadata).build())
+                        player?.prepare()
+                        player?.play()
+                        MusicEngine.history(context).recordTrackPlayed(MusicEngine.run { song.toTrack() })
+                        MusicEngine.reportPlayback(song.id)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        Toast.makeText(context, e.message ?: "Gagal memutar lagu", Toast.LENGTH_LONG).show()
+                    }
+                }
             }.padding(10.dp),verticalAlignment=Alignment.CenterVertically){
                 AsyncImage(song.thumbnail,null,Modifier.size(54.dp).clip(RoundedCornerShape(10.dp)))
                 Column(Modifier.weight(1f).padding(horizontal=12.dp)){Text(song.title,color=c.text,fontWeight=FontWeight.SemiBold,maxLines=1,overflow=TextOverflow.Ellipsis);Text(song.artist+" • "+song.duration,color=c.muted,fontSize=12.sp,maxLines=1)}
