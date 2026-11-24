@@ -326,83 +326,80 @@ class HeastNativeBackend {
     }
 
     suspend fun searchTracks(query: String): List<Track> = withContext(Dispatchers.IO) {
-        if (query.isBlank()) return@withContext emptyList()
-        val q = query.trim().lowercase()
+        val normalizedQuery = query.trim()
+        if (normalizedQuery.isBlank()) return@withContext emptyList()
+
+        val cacheKey = normalizedQuery.lowercase()
         val now = System.currentTimeMillis()
         synchronized(searchCache) {
-            searchCache.get(q)?.let { (cached, time) ->
-                if (now - time < SEARCH_CACHE_TTL) {
+            searchCache.get(cacheKey)?.let { (cached, cachedAt) ->
+                if (now - cachedAt < SEARCH_CACHE_TTL) {
                     return@withContext cached
                 }
             }
         }
 
-        val ytmTracks = coroutineScope {
-            val songsDeferred = async { searchYouTubeMusicByParams(query, YTM_PARAMS_SONGS) }
-            val generalDeferred = async { searchYouTubeMusicByParams(query, null) }
-            val videosDeferred = async { searchYouTubeMusicByParams(query, YTM_PARAMS_VIDEOS) }
-
-            val songsList = songsDeferred.await()
-            val generalList = generalDeferred.await()
-            val videosList = videosDeferred.await()
-
-            val merged = LinkedHashMap<String, Track>()
-            /* Prioritize official YouTube Music Songs (Official Audio) at #1-#5 */
-            for (t in songsList.take(8)) {
-                if (t.id.isNotBlank() && !merged.containsKey(t.id)) {
-                    merged[t.id] = t
-                }
+        val (songsList, generalList) = coroutineScope {
+            val songsDeferred = async {
+                searchYouTubeMusicByParams(normalizedQuery, YTM_PARAMS_SONGS)
             }
-            for (t in generalList) {
-                if (t.id.isNotBlank()) {
-                    val existing = merged[t.id]
-                    if (existing == null) {
-                        merged[t.id] = t
-                    } else if (existing.durationSeconds <= 0L && t.durationSeconds > 0L) {
-                        merged[t.id] = existing.copy(durationSeconds = t.durationSeconds)
-                    }
-                }
+            val generalDeferred = async {
+                searchYouTubeMusicByParams(normalizedQuery, null)
             }
-            for (t in songsList.drop(8)) {
-                val existing = merged[t.id]
+            songsDeferred.await() to generalDeferred.await()
+        }
+
+        val merged = LinkedHashMap<String, Track>()
+        for (track in songsList.take(8)) {
+            if (track.id.isNotBlank()) merged[track.id] = track
+        }
+        for (track in generalList) {
+            if (track.id.isBlank()) continue
+            val existing = merged[track.id]
+            if (existing == null) {
+                merged[track.id] = track
+            } else if (existing.durationSeconds <= 0L && track.durationSeconds > 0L) {
+                merged[track.id] = existing.copy(durationSeconds = track.durationSeconds)
+            }
+        }
+        for (track in songsList.drop(8)) {
+            if (track.id.isBlank()) continue
+            val existing = merged[track.id]
+            if (existing == null) {
+                merged[track.id] = track
+            } else if (existing.durationSeconds <= 0L && track.durationSeconds > 0L) {
+                merged[track.id] = existing.copy(durationSeconds = track.durationSeconds)
+            }
+        }
+
+        if (merged.size < 8) {
+            val videosList = searchYouTubeMusicByParams(normalizedQuery, YTM_PARAMS_VIDEOS)
+            for (track in videosList) {
+                if (track.id.isBlank()) continue
+                val existing = merged[track.id]
                 if (existing == null) {
-                    merged[t.id] = t
-                } else if (existing.durationSeconds <= 0L && t.durationSeconds > 0L) {
-                    merged[t.id] = existing.copy(durationSeconds = t.durationSeconds)
+                    merged[track.id] = track
+                } else if (existing.durationSeconds <= 0L && track.durationSeconds > 0L) {
+                    merged[track.id] = existing.copy(durationSeconds = track.durationSeconds)
                 }
             }
-            for (t in videosList) {
-                val existing = merged[t.id]
-                if (existing == null) {
-                    merged[t.id] = t
-                } else if (existing.durationSeconds <= 0L && t.durationSeconds > 0L) {
-                    merged[t.id] = existing.copy(durationSeconds = t.durationSeconds)
+        }
+
+        if (merged.size < 8) {
+            for (track in fetchNewPipeSearchTracks(normalizedQuery)) {
+                if (track.id.isNotBlank() && !merged.containsKey(track.id)) {
+                    merged[track.id] = track
                 }
             }
-            merged.values.toList()
         }
 
-        val fallbackTracks = if (ytmTracks.size < 8) {
-            fetchNewPipeSearchTracks(query)
-        } else {
-            emptyList()
-        }
-
-        val combinedMap = LinkedHashMap<String, Track>()
-        for (t in ytmTracks) {
-            if (t.id.isNotBlank()) combinedMap[t.id] = t
-        }
-        for (t in fallbackTracks) {
-            if (t.id.isNotBlank() && !combinedMap.containsKey(t.id)) {
-                combinedMap[t.id] = t
+        val results = merged.values.toList()
+        if (results.isNotEmpty()) {
+            synchronized(searchCache) {
+                searchCache.put(cacheKey, Pair(results, System.currentTimeMillis()))
             }
         }
-
-        val finalResults = combinedMap.values.toList()
-        if (finalResults.isNotEmpty()) {
-            synchronized(searchCache) { searchCache.put(q, Pair(finalResults, now)) }
-        }
-        finalResults
+        results
     }
 
     private fun fetchNewPipeSearchTracks(query: String): List<Track> {
