@@ -1,6 +1,6 @@
 package com.xyrcodex.dapsmods.data.player
 
-import androidx.media3.common.Player
+import com.google.android.exoplayer2.Player
 import com.xyrcodex.dapsmods.data.model.Track
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
