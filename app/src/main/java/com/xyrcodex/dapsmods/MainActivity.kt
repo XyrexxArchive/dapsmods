@@ -45,7 +45,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
-enum class AppTab { MUSIC, TOOLS, SETTINGS }
+enum class AppTab { MUSIC, LIBRARY, TOOLS, SETTINGS }
 enum class AppTheme { LIGHT, DARK, GLASS, BRUTAL }
 
 class MainActivity : ComponentActivity() {
@@ -90,10 +90,11 @@ class MainActivity : ComponentActivity() {
         Surface(Modifier.fillMaxSize(),color=c.bg) {
             Column {
                 Box(Modifier.weight(1f)) {
-                    when(tab){AppTab.MUSIC->MusicScreen(c,player);AppTab.TOOLS->ToolsScreen(c);AppTab.SETTINGS->SettingsScreen(c,theme){theme=it}}
+                    when(tab){AppTab.MUSIC->MusicScreen(c,player);AppTab.LIBRARY->LibraryScreen(c,player);AppTab.TOOLS->ToolsScreen(c);AppTab.SETTINGS->SettingsScreen(c,theme){theme=it}}
                 }
                 NavigationBar(containerColor=c.card,tonalElevation=0.dp) {
                     NavigationBarItem(selected=tab==AppTab.MUSIC,onClick={tab=AppTab.MUSIC},icon={Icon(Icons.Rounded.MusicNote,null)},label={Text("Music")},colors=navColors(c))
+                    NavigationBarItem(selected=tab==AppTab.LIBRARY,onClick={tab=AppTab.LIBRARY},icon={Icon(Icons.Rounded.LibraryMusic,null)},label={Text("Library")},colors=navColors(c))
                     NavigationBarItem(selected=tab==AppTab.TOOLS,onClick={tab=AppTab.TOOLS},icon={Icon(Icons.Rounded.Construction,null)},label={Text("Tools")},colors=navColors(c))
                     NavigationBarItem(selected=tab==AppTab.SETTINGS,onClick={tab=AppTab.SETTINGS},icon={Icon(Icons.Rounded.Settings,null)},label={Text("Pengaturan")},colors=navColors(c))
                 }
@@ -108,6 +109,18 @@ data class ThemeColors(val bg:Color,val card:Color,val text:Color,val muted:Colo
     val context=LocalContext.current
     var query by remember{mutableStateOf("")}; var songs by remember{mutableStateOf(emptyList<Song>())}
     var loading by remember{mutableStateOf(false)}; var error by remember{mutableStateOf("")}
+    var homeSections by remember{mutableStateOf(emptyList<com.xyrcodex.dapsmods.data.model.HomeSection>())}
+    var trending by remember{mutableStateOf(emptyList<com.xyrcodex.dapsmods.data.model.Track>())}
+    var homeLoading by remember{mutableStateOf(true)}
+    LaunchedEffect(Unit) {
+        try {
+            homeSections = MusicEngine.homeShelves()
+            trending = MusicEngine.trending()
+        } catch (_: Throwable) {
+        } finally {
+            homeLoading = false
+        }
+    }
     var playing by remember{mutableStateOf<Song?>(null)}; var lyrics by remember{mutableStateOf<Lyrics?>(null)}
     var showLyrics by remember{mutableStateOf(false)}; var showQueue by remember{mutableStateOf(false)}
     var positionMs by remember{mutableStateOf(0L)}; var durationMs by remember{mutableStateOf(0L)}
@@ -183,8 +196,45 @@ data class ThemeColors(val bg:Color,val card:Color,val text:Color,val muted:Colo
                 Text("Sedang mencari musik...",color=c.text,fontWeight=FontWeight.SemiBold)
                 Text("Menghubungkan ke YouTube Music",color=c.muted,fontSize=12.sp)
             }
-        } else if(songs.isEmpty()) Box(Modifier.fillMaxWidth().weight(1f),contentAlignment=Alignment.Center) {
-            Column(horizontalAlignment=Alignment.CenterHorizontally){Icon(Icons.Rounded.LibraryMusic,null,tint=c.muted,modifier=Modifier.size(46.dp));Spacer(Modifier.height(10.dp));Text(if(error.isNotBlank()) "Belum ada hasil" else "Cari musik favoritmu",color=c.text,fontWeight=FontWeight.SemiBold);Text(if(error.isNotBlank()) "Periksa kata kunci lalu coba lagi" else "Hasil pencarian dari YouTube Music",color=c.muted,fontSize=12.sp)}
+        } else if(songs.isEmpty()) LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(bottom=16.dp),verticalArrangement=Arrangement.spacedBy(14.dp)) {
+            item { Text(if(error.isNotBlank()) "Belum ada hasil" else "Jelajahi musik",color=c.text,fontSize=19.sp,fontWeight=FontWeight.Bold) }
+            if(trending.isNotEmpty()) {
+                item { Text("Trending",color=c.text,fontWeight=FontWeight.Bold,fontSize=17.sp) }
+                item {
+                    LazyRow(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+                        items(trending.take(12),key={it.id}) { track ->
+                            Column(Modifier.width(142.dp).clickable {
+                                MusicEngine.queue().setQueue(trending, trending.indexOf(track))
+                                scope.launch { playQueuedTrack(track) }
+                            }) {
+                                AsyncImage(track.highResThumbnailUrl,null,Modifier.fillMaxWidth().height(142.dp).clip(RoundedCornerShape(12.dp)))
+                                Text(track.title,color=c.text,fontWeight=FontWeight.SemiBold,maxLines=2,fontSize=13.sp)
+                                Text(track.artist,color=c.muted,maxLines=1,fontSize=11.sp)
+                            }
+                        }
+                    }
+                }
+            }
+            items(homeSections,key={it.title}) { section ->
+                Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                    Text(section.title,color=c.text,fontWeight=FontWeight.Bold,fontSize=17.sp)
+                    LazyRow(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+                        items(section.tracks,key={it.id}) { track ->
+                            Column(Modifier.width(142.dp).clickable {
+                                MusicEngine.queue().setQueue(section.tracks, section.tracks.indexOf(track))
+                                scope.launch { playQueuedTrack(track) }
+                            }) {
+                                AsyncImage(track.highResThumbnailUrl,null,Modifier.fillMaxWidth().height(142.dp).clip(RoundedCornerShape(12.dp)))
+                                Text(track.title,color=c.text,fontWeight=FontWeight.SemiBold,maxLines=2,fontSize=13.sp)
+                                Text(track.artist,color=c.muted,maxLines=1,fontSize=11.sp)
+                            }
+                        }
+                    }
+                }
+            }
+            if(homeLoading && trending.isEmpty() && homeSections.isEmpty()) item {
+                Box(Modifier.fillMaxWidth().height(180.dp),contentAlignment=Alignment.Center) { CircularProgressIndicator(color=c.accent) }
+            }
         } else LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(bottom=16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)) {
             items(songs,key={it.id}){song->Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(c.card).clickable{
                 playing=song
@@ -264,6 +314,76 @@ data class ThemeColors(val bg:Color,val card:Color,val text:Color,val muted:Colo
         Text(playing?.title.orEmpty(),color=c.text,fontWeight=FontWeight.Bold);Spacer(Modifier.height(8.dp))
         if(lyrics==null)Text("Lirik belum tersedia atau sedang dimuat.",color=c.muted) else LazyColumn{items(lyrics!!.lines){line->Text(line.second,color=c.text,modifier=Modifier.padding(vertical=5.dp))}}
     }},confirmButton={TextButton(onClick={showLyrics=false}){Text("Tutup")}})
+}
+
+@Composable fun LibraryScreen(c:ThemeColors,player:Player?) {
+    val context=LocalContext.current
+    val history=remember { MusicEngine.history(context) }
+    val offline=remember { MusicEngine.offline(context) }
+    val playlists=remember { MusicEngine.playlists(context) }
+    val recent by history.recentlyPlayed.collectAsState()
+    val downloaded by offline.offlineTracks.collectAsState()
+    val userPlaylists by playlists.playlists.collectAsState()
+    val scope=rememberCoroutineScope()
+    var selected by remember { mutableStateOf("Riwayat") }
+    Column(Modifier.fillMaxSize().padding(horizontal=20.dp)) {
+        Spacer(Modifier.height(24.dp))
+        Text("Library",fontSize=27.sp,fontWeight=FontWeight.Bold,color=c.text)
+        Text("Koleksi musik kamu",fontSize=13.sp,color=c.muted)
+        Spacer(Modifier.height(16.dp))
+        Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+            listOf("Riwayat","Offline","Playlist").forEach { item ->
+                FilterChip(selected=selected==item,onClick={selected=item},label={Text(item)})
+            }
+        }
+        when(selected) {
+            "Riwayat" -> LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(vertical=12.dp)) {
+                items(recent,key={it.id}) { track -> LibraryTrackRow(track,c) { scope.launch { playLibraryTrack(track,player,context) } } }
+            }
+            "Offline" -> LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(vertical=12.dp)) {
+                items(downloaded,key={it.track.id}) { item ->
+                    LibraryTrackRow(item.track,c) {
+                        val meta=MediaMetadata.Builder().setTitle(item.track.title).setArtist(item.track.artist).setArtworkUri(Uri.parse(item.track.thumbnailUrl)).build()
+                        player?.setMediaItem(MediaItem.Builder().setMediaId(item.track.id).setUri(item.localUri).setMediaMetadata(meta).build())
+                        player?.prepare();player?.play()
+                    }
+                }
+            }
+            else -> LazyColumn(Modifier.weight(1f),contentPadding=PaddingValues(vertical=12.dp)) {
+                items(userPlaylists,key={it.id}) { playlist ->
+                    Column(Modifier.fillMaxWidth().padding(vertical=10.dp)) {
+                        Text(playlist.name,color=c.text,fontWeight=FontWeight.Bold)
+                        Text("${playlist.tracks.size} lagu",color=c.muted,fontSize=12.sp)
+                        playlist.tracks.forEach { track -> LibraryTrackRow(track,c) { scope.launch { playLibraryTrack(track,player,context) } } }
+                    }
+                }
+            }
+        }
+    }
+}
+
+private suspend fun playLibraryTrack(track:com.xyrcodex.dapsmods.data.model.Track,player:Player?,context:Context) {
+    try {
+        val song=MusicEngine.run { track.toSong() }
+        val url=MusicEngine.resolve(song)
+        val meta=MediaMetadata.Builder().setTitle(track.title).setArtist(track.artist).setArtworkUri(Uri.parse(track.thumbnailUrl)).build()
+        player?.setMediaItem(MediaItem.Builder().setMediaId(track.id).setUri(url).setMediaMetadata(meta).build())
+        player?.prepare();player?.play()
+        MusicEngine.history(context).recordTrackPlayed(track)
+    } catch(e:Throwable) {
+        Toast.makeText(context,e.message ?: "Gagal memutar",Toast.LENGTH_LONG).show()
+    }
+}
+
+@Composable private fun LibraryTrackRow(track:com.xyrcodex.dapsmods.data.model.Track,c:ThemeColors,onClick:()->Unit) {
+    Row(Modifier.fillMaxWidth().clickable(onClick=onClick).padding(vertical=8.dp),verticalAlignment=Alignment.CenterVertically) {
+        AsyncImage(track.thumbnailUrlForDisplay(180),null,Modifier.size(52.dp).clip(RoundedCornerShape(9.dp)))
+        Column(Modifier.weight(1f).padding(horizontal=12.dp)) {
+            Text(track.title,color=c.text,fontWeight=FontWeight.SemiBold,maxLines=1)
+            Text(track.artist,color=c.muted,fontSize=12.sp,maxLines=1)
+        }
+        Icon(Icons.Rounded.PlayArrow,null,tint=c.accent)
+    }
 }
 
 @Composable fun ToolsScreen(c:ThemeColors) {
