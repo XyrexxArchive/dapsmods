@@ -20,7 +20,9 @@ object MusicEngine {
     suspend fun search(query:String):List<Song> = withContext(Dispatchers.IO) {
         if(query.isBlank()) return@withContext emptyList()
         val body=JSONObject().put("context",JSONObject().put("client",JSONObject().put("clientName","WEB_REMIX").put("clientVersion","1.20260401.01.00").put("hl","en").put("gl","ID"))).put("query",query).put("params","Eg-KAQwIARAAGAAgACgAMABqChAEEAMQCRAFEAo=").toString()
-        val builder=Request.Builder().url(YTM)\n        headers.forEach{(key,value)->builder.header(key,value)}\n        val req=builder.post(body.toRequestBody("application/json; charset=utf-8".toMediaType())).build()
+        val builder=Request.Builder().url(YTM)
+        headers.forEach{(key,value)->builder.header(key,value)}
+        val req=builder.post(body.toRequestBody("application/json; charset=utf-8".toMediaType())).build()
         client.newCall(req).execute().use { res ->
             if(!res.isSuccessful) error("Music search HTTP ${res.code}")
             val root=JSONObject(res.body?.string().orEmpty())
